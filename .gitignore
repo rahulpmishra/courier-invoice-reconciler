@@ -13,6 +13,10 @@
 # Deployment bundle, rebuilt on demand
 /dist/
 
+# Sample files for the hosted demo. The Pages workflow copies these in from
+# tests/fixtures at build time; keep them out of the app folder in the repo.
+/web/samples/
+
 node_modules/
 __pycache__/
 *.py[cod]

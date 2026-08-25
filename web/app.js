@@ -16,8 +16,10 @@ const state = {
 
 /* ------------------------------------------------------------ file pickers */
 
-wireDrop('pdfDrop', 'pdfInput', 'pdfHint', loadPdf);
-wireDrop('xlsDrop', 'xlsInput', 'xlsHint', loadExcel);
+const load = {
+  pdf: wireDrop('pdfDrop', 'pdfInput', 'pdfHint', loadPdf),
+  excel: wireDrop('xlsDrop', 'xlsInput', 'xlsHint', loadExcel),
+};
 
 function wireDrop(dropId, inputId, hintId, handler) {
   const drop = $(dropId);
@@ -53,7 +55,41 @@ function wireDrop(dropId, inputId, hintId, handler) {
     }
     refreshControls();
   }
+
+  return run;
 }
+
+/* --------------------------------------------------------------- samples */
+
+/* The hosted demo ships a synthetic invoice and register, because a visitor
+   who has never seen a courier invoice has nothing to try the page with.
+   Served from samples/, which only the Pages deploy creates - so the button
+   stays hidden anywhere the folder is absent. */
+const SAMPLES = [
+  ['samples/sample-invoice.pdf', 'application/pdf', 'pdf'],
+  ['samples/sample-register.csv', 'text/csv', 'excel'],
+];
+
+fetch(SAMPLES[0][0], { method: 'HEAD' })
+  .then((res) => { $('sampleRow').hidden = !res.ok; })
+  .catch(() => {});
+
+$('sampleBtn').addEventListener('click', async () => {
+  const btn = $('sampleBtn');
+  btn.disabled = true;
+  try {
+    for (const [url, type, which] of SAMPLES) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+      const name = url.split('/').pop();
+      await load[which](new File([await res.blob()], name, { type }));
+    }
+    $('runBtn').click();
+  } catch (err) {
+    setStatus(`Could not load the sample files: ${err.message}`, true);
+  }
+  btn.disabled = false;
+});
 
 /* ------------------------------------------------------------------ pdf in */
 

@@ -127,6 +127,10 @@
   table.compact { width: 100%; font-size: 0.78rem; }
   table.compact th, table.compact td { padding: 6px 4px; }
   table.compact th:first-child, table.compact td:first-child { padding-left: 8px; }
+  .samples {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 0 0 12px; color: var(--muted); font-size: 0.85rem;
+  }
   .note { color: var(--muted); font-size: 0.78rem; margin: 8px 0 0; }
   #status { color: var(--muted); font-size: 0.85rem; min-height: 1.2em; }
   #status.error { color: var(--bad); }
@@ -156,6 +160,11 @@
       <div class="hint" id="xlsHint">Tap to choose, or drop a file here</div>
     </label>
   </div>
+
+  <p class="samples" id="sampleRow" hidden>
+    No invoice to hand?
+    <button class="ghost" id="sampleBtn" type="button">Try it with sample files</button>
+  </p>
 
   <div class="card" id="optionsCard" hidden>
     <div class="controls">

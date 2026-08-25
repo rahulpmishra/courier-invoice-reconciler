@@ -1,0 +1,43 @@
+name: Deploy demo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it half-published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage the sample files with the app
+        # A visitor has no courier invoice to try the page with, so the demo
+        # ships the synthetic fixtures. The app looks for samples/ and hides
+        # its "try it" button wherever the folder is absent, which is why this
+        # copy lives here rather than in the repository.
+        run: |
+          mkdir -p web/samples
+          cp tests/fixtures/sample-invoice.pdf tests/fixtures/sample-register.csv web/samples/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -57,6 +57,19 @@ function feed(win, input, file) {
 
 try {
   const frame = document.getElementById('frame');
+
+  // Listen before app.js runs. A module that throws while importing never sets
+  // appReady, so without this the only symptom is an unexplained timeout.
+  await until(() => frame.contentWindow?.location?.href?.includes('index.html'));
+  frame.contentWindow.addEventListener('error', (e) => {
+    lines.push(`PAGE ERROR: ${e.message} @ ${String(e.filename).split('/').pop()}:${e.lineno}`);
+    failures += 1;
+  });
+  frame.contentWindow.addEventListener('unhandledrejection', (e) => {
+    lines.push(`PAGE REJECTION: ${e.reason}`);
+    failures += 1;
+  });
+
   // Wait for app.js to have run, not merely for the HTML to have parsed: the
   // module is deferred, so the inputs exist well before any listener does.
   await until(() => frame.contentDocument?.documentElement?.dataset?.appReady);
@@ -64,7 +77,23 @@ try {
   const doc = frame.contentDocument;
   const $ = (id) => doc.getElementById(id);
 
-  win.addEventListener('error', (e) => { lines.push(`PAGE ERROR: ${e.message}`); failures += 1; });
+  // web/samples/ only exists in the Pages build. Check whichever branch applies
+  // so the demo's own entry point is not shipped untested.
+  const hasSamples = (await win.fetch('/web/samples/sample-invoice.pdf', { method: 'HEAD' })).ok;
+  await until(() => $('sampleRow').hidden === !hasSamples, 8000);
+  check(`sample button ${hasSamples ? 'shown' : 'hidden'} (samples ${hasSamples ? 'present' : 'absent'})`,
+    $('sampleRow').hidden, String(!hasSamples));
+
+  if (hasSamples) {
+    $('sampleBtn').click();
+    await until(() => !$('summaryCard').hidden, 30000);
+    check('sample button loads both files and compares',
+      [...$('chips').querySelectorAll('.chip')].map((c) => c.textContent).join(' | '),
+      '41 matched | 5 only in Excel | 80 only in PDF | 1 with an unreadable date');
+    check('  ...and names the files it loaded',
+      `${$('pdfHint').textContent.startsWith('120 rows')} ${$('xlsHint').textContent.startsWith('71 rows')}`,
+      'true true');
+  }
 
   const [pdf, xls] = await Promise.all([
     fileFrom(win, '/tests/fixtures/sample-invoice.pdf', 'application/pdf'),

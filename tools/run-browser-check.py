@@ -63,6 +63,12 @@ class Handler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def end_headers(self):
+        # Chrome reuses its profile between runs, so without this it will
+        # happily assert against a cached copy of a file you just edited.
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def log_message(self, *args):
         pass
 

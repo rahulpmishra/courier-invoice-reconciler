@@ -10,6 +10,10 @@ Consignment numbers (AWBs) present on both sides are matched and hidden. It is a
 static page: no backend, no build step, no database. Every file is parsed in the
 browser, so shipment data never leaves the machine it is opened on.
 
+**[Try the live demo](https://rahulpmishra.github.io/courier-invoice-reconciler/)** — it ships
+sample files, so you can see a full reconciliation in one click without having a
+courier invoice to hand.
+
 ![The reconciler with a sample invoice loaded](docs/screenshot.png)
 
 Built against Trackon invoices, but the parser reads the table layout from each
@@ -104,7 +108,10 @@ and worker loads that pdf.js needs. It has to be served over HTTP.
 
 ## Deploy
 
-Copy `web/` to any static host. There is nothing to configure and nothing to run
+`.github/workflows/pages.yml` publishes `web/` to GitHub Pages on every push to
+`main`, copying the fixtures in as `samples/` so the demo has something to open.
+
+Anywhere else, copy `web/` to any static host. There is nothing to configure and nothing to run
 server-side.
 
 On Apache, keep `web/.htaccess` with it. It carries two directives that matter:
