@@ -1,0 +1,33 @@
+# AWB Matcher — Apache config.
+#
+# SCOPE: this file lives inside the app's own folder (e.g. public_html/awb/)
+# and applies to that folder only. It cannot affect the parent site. Do not
+# copy any of it into public_html/.htaccess.
+
+# The parent site is a PHP app whose .htaccess says "DirectoryIndex index.php".
+# Subfolders inherit that, and this folder has no index.php — so a bare /awb/
+# request finds no index page, falls through to directory listing, and the
+# "Options -Indexes" line below refuses it with a 403, even though
+# /awb/index.html loads perfectly. Naming index.html here fixes that, and the
+# override applies to this folder only.
+DirectoryIndex index.html index.htm
+
+# Apache does not always know the .mjs extension. Without a JavaScript mime
+# type the browser refuses pdf.min.mjs ("disallowed MIME type") and the page
+# loads but does nothing at all — no error, just a dead Compare button.
+<IfModule mod_mime.c>
+  AddType text/javascript .mjs
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/javascript application/javascript
+</IfModule>
+
+# Nothing here is server-side; don't let anyone browse the folder listing.
+# If your host forbids Options in .htaccess this line causes a 500 — drop it.
+Options -Indexes
+
+# Deliberately no RewriteEngine directives. The parent's front-controller rule
+# is guarded by !-f and !-d, and every path here is a real file or this
+# directory, so it never fires. Adding "RewriteEngine Off" would isolate this
+# folder but would also cancel any inherited HTTPS redirect for these URLs.
