@@ -80,6 +80,12 @@ real data-entry error.
 **Rows whose date cannot be read are compared, not dropped**, and counted
 separately, so nothing disappears silently.
 
+**Every sheet in a workbook is read**, not just the first. Registers drift into a
+tab per month, and quietly reconciling one of them looks exactly like a correct
+answer. Sheets with no AWB column — rate cards, summaries — are left alone, and
+sheets need not agree on their columns: they are matched up by header name.
+Where more than one sheet contributes, rows are labelled `Sheet!Row`.
+
 ## Reading "only in PDF"
 
 A large "only in PDF" number is not by itself evidence of over-billing; it is
@@ -166,7 +172,7 @@ regenerating them.
 | `web/vendor/` | pinned pdf.js 5.4.149 (legacy build) and SheetJS 0.20.3 |
 | `extract_awb.py` | CLI that extracts invoice rows via `pdftotext -table` |
 | `tools/` | fixture generator and the two test suites |
-| `tests/fixtures/` | synthetic invoice, register, and expected output |
+| `tests/fixtures/` | synthetic invoice, registers (flat and per-month tabs), expected output |
 
 `extract_awb.py` predates the browser version and is kept as an independent
 second opinion: both extractors are checked against the same fixture, by

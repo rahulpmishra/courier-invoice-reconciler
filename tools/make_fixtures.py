@@ -259,7 +259,25 @@ def main():
         for r in register:
             ws.append([r[f] for f in fields])
         wb.save(os.path.join(OUT, "sample-register.xlsx"))
-        xlsx = "sample-register.xlsx"
+
+        # The same rows split across tabs, the way a register drifts once
+        # someone starts a new sheet each month. Reconciling this must give
+        # exactly the same answer as the flat file above. The third sheet has
+        # no AWB column and must be ignored rather than parsed as bookings.
+        split = len(register) - 25
+        wb = Workbook()
+        for name, chunk in (("June", register[:split]), ("July", register[split:])):
+            ws = wb.create_sheet(name)
+            ws.append(fields)
+            for r in chunk:
+                ws.append([r[f] for f in fields])
+        rates = wb.create_sheet("Rates")
+        rates.append(["ZONE", "PER KG"])
+        for zone, rate in (("NORTH", 42), ("SOUTH", 55), ("EAST", 48)):
+            rates.append([zone, rate])
+        del wb["Sheet"]
+        wb.save(os.path.join(OUT, "sample-register-multisheet.xlsx"))
+        xlsx = "sample-register.xlsx, sample-register-multisheet.xlsx"
     except ImportError:
         xlsx = "(skipped - openpyxl not installed)"
 

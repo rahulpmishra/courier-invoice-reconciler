@@ -103,23 +103,39 @@ check('second invoice detected on its own pages',
 
 const XLSX = require('../web/vendor/xlsx.full.min.js');
 
+/* Mirrors web/app.js: every sheet with an AWB column, matched up by header
+   name, rate cards and summaries left alone. */
 function readRegister(file, type) {
   const wb = XLSX.read(readFileSync(fixture(file)), { type, cellDates: true });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
-  const headerIndex = grid.findIndex((r) => r.some((c) => /awb/i.test(String(c))));
-  const header = grid[headerIndex].map((c) => String(c).replace(/\s+/g, ' ').trim());
+  const sheets = [];
+  for (const name of wb.SheetNames) {
+    const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
+    const at = grid.findIndex((r) => r.some((c) => /awb/i.test(String(c))));
+    if (at < 0) continue;
+    sheets.push({
+      name,
+      header: grid[at].map((c) => String(c).replace(/\s+/g, ' ').trim()),
+      body: grid.slice(at + 1).filter((r) => r.some((c) => String(c).trim() !== '')),
+      at,
+    });
+  }
+  const header = [];
+  for (const s of sheets) for (const h of s.header) if (!header.includes(h)) header.push(h);
   const awbCol = header.findIndex((c) => /awb/i.test(c));
   const dateCol = header.findIndex((c) => /date/i.test(c));
-  const rows = grid.slice(headerIndex + 1)
-    .filter((r) => r.some((c) => String(c).trim() !== ''))
-    .map((cells, i) => ({
-      rowNumber: headerIndex + 2 + i,
-      awb: normaliseAwb(cells[awbCol]),
-      date: parseLooseDate(cells[dateCol]),
-      cells: header.map((_, c) => display(cells[c])),
+
+  const rows = [];
+  for (const s of sheets) {
+    const map = header.map((h) => s.header.indexOf(h));
+    s.body.forEach((cells, i) => rows.push({
+      sheet: s.name,
+      rowNumber: s.at + 2 + i,
+      awb: normaliseAwb(map[awbCol] < 0 ? '' : cells[map[awbCol]]),
+      date: dateCol < 0 || map[dateCol] < 0 ? null : parseLooseDate(cells[map[dateCol]]),
+      cells: map.map((c) => (c < 0 ? '' : display(cells[c]))),
     }));
-  return { header, awbCol, dateCol, rows };
+  }
+  return { header, awbCol, dateCol, rows, sheets: sheets.map((s) => s.name) };
 }
 
 console.log('\n--- excel parsing (csv) ---');
@@ -180,6 +196,30 @@ const xlsxResult = compare(pdfRows, xlsxReg.rows, period, true);
 check('matched agrees with the csv path', xlsxResult.matched.length, result.matched.length);
 check('only-in-excel agrees with the csv path', xlsxResult.excelOnly.length, result.excelOnly.length);
 check('only-in-pdf agrees with the csv path', xlsxResult.pdfOnly.length, result.pdfOnly.length);
+
+/* ------------------------------------------------- a register split by month */
+
+console.log('');
+console.log('--- excel parsing (multi-sheet xlsx) ---');
+const multi = readRegister('sample-register-multisheet.xlsx', 'buffer');
+check('sheets with bookings are used', multi.sheets.join(', '), 'June, July');
+check('the rate card is left alone', multi.sheets.includes('Rates'), 'false');
+check('rows across both sheets', multi.rows.length, 71);
+check('rows carry their sheet', new Set(multi.rows.map((r) => r.sheet)).size, 2);
+
+/* The whole point: splitting a register across tabs must not change the answer. */
+const multiResult = compare(pdfRows, multi.rows, period, true);
+check('matched', multiResult.matched.length, result.matched.length);
+check('in excel not in pdf', multiResult.excelOnly.length, result.excelOnly.length);
+check('in pdf not in excel', multiResult.pdfOnly.length, result.pdfOnly.length);
+check('skipped', multiResult.skipped.length, result.skipped.length);
+check('same awbs, in the same order',
+  multiResult.excelOnly.map((r) => r.awb).join(',') === result.excelOnly.map((r) => r.awb).join(','),
+  'true');
+const multiCov = coverage(pdfRows, multiResult.matched.concat(multiResult.excelOnly));
+check('coverage is unchanged too',
+  `${multiCov.totals.billed}/${multiCov.totals.booked}/${multiCov.totals.matched}/${multiCov.totals.gap}`,
+  `${cov.totals.billed}/${cov.totals.booked}/${cov.totals.matched}/${cov.totals.gap}`);
 
 /* ------------------------------------------------------------ small pieces */
 

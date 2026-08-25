@@ -182,6 +182,27 @@ try {
   check('pdf table scrolls inside its card', scroller.scrollHeight > scroller.clientHeight, 'true');
   check('sticky awb column', win.getComputedStyle($('pdfTable').querySelector('td.key')).position, 'sticky');
 
+  // The same register split across a tab per month must reconcile identically,
+  // and the rate-card sheet must not be read as bookings.
+  const before = chips();
+  feed(win, $('xlsInput'),
+    await fileFrom(win, '/tests/fixtures/sample-register-multisheet.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'));
+  await until(() => $('xlsHint').textContent.includes('sheets'));
+  check('multi-sheet hint names the sheets it used', $('xlsHint').textContent,
+    '71 rows · 2 sheets (June, July)');
+  $('runBtn').click();
+  await until(() => !$('summaryCard').hidden);
+  check('splitting the register across tabs changes nothing', chips(), before);
+  check('rows are labelled with their sheet',
+    $('excelTable').querySelector('tbody tr').children[1].textContent.startsWith('June!'), 'true');
+
+  // put the flat register back so the screenshot matches the documented run
+  feed(win, $('xlsInput'), xls);
+  await until(() => $('xlsHint').textContent.includes('sheet "Sheet1"'));
+  $('runBtn').click();
+  await until(() => !$('summaryCard').hidden);
+
   // A --screenshot run wants the app on its own, wide, with the panel open.
   $('coverageCard').querySelector('details').open = true;
   if (location.search.includes('shot')) {

@@ -122,39 +122,81 @@ async function loadPdf(file) {
 
 async function loadExcel(file) {
   const book = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
-  const sheet = book.Sheets[book.SheetNames[0]];
-  if (!sheet) throw new Error('the workbook has no sheets');
+  if (!book.SheetNames.length) throw new Error('the workbook has no sheets');
 
-  // Two views of the same grid: raw values drive the logic (no scientific
-  // notation on long AWB numbers), formatted values drive what is displayed.
-  const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
-  const fmt = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+  // Read every sheet, not just the first. Registers drift into a tab per month,
+  // and quietly reconciling one of them looks exactly like a correct answer.
+  // Sheets with no AWB column (rate cards, summaries) are left alone.
+  let sheets = book.SheetNames
+    .map((name) => readSheet(book.Sheets[name], name))
+    .filter(Boolean);
+  if (!sheets.length) {
+    const first = book.SheetNames[0];
+    sheets = [readSheet(book.Sheets[first], first, true)].filter(Boolean);
+  }
+  if (!sheets.length) throw new Error('no readable rows in this workbook');
 
-  const headerIndex = raw.findIndex((row) => row.some((c) => /awb/i.test(String(c))));
-  const useHeader = headerIndex >= 0 ? headerIndex : 0;
-  const header = (raw[useHeader] || []).map((c) => String(c).replace(/\s+/g, ' ').trim());
-  if (!header.length) throw new Error('the first sheet looks empty');
+  // Sheets need not agree on their columns, so match them up by header name
+  // rather than by position and take the union.
+  const header = [];
+  for (const sheet of sheets) {
+    for (const name of sheet.header) if (!header.includes(name)) header.push(name);
+  }
 
+  const many = sheets.length > 1;
   const rows = [];
-  for (let i = useHeader + 1; i < raw.length; i += 1) {
-    const rawRow = raw[i] || [];
-    const fmtRow = fmt[i] || [];
-    if (!rawRow.some((c) => String(c).trim() !== '')) continue;
-    rows.push({
-      rowNumber: i + 1,
-      raw: rawRow,
-      cells: header.map((_, c) => display(fmtRow[c] ?? rawRow[c])),
-    });
+  for (const sheet of sheets) {
+    const at = header.map((name) => sheet.header.indexOf(name));
+    for (const row of sheet.rows) {
+      rows.push({
+        sheet: sheet.name,
+        rowNumber: row.rowNumber,
+        rowLabel: many ? `${sheet.name}!${row.rowNumber}` : String(row.rowNumber),
+        raw: at.map((i) => (i < 0 ? '' : row.raw[i])),
+        cells: at.map((i) => (i < 0 ? '' : display(row.fmt[i] ?? row.raw[i]))),
+      });
+    }
   }
 
   state.excel = {
-    name: file.name, header, rows, sheetName: book.SheetNames[0],
+    name: file.name,
+    header,
+    rows,
+    sheets: sheets.map((s) => s.name),
+    skipped: book.SheetNames.filter((n) => !sheets.some((s) => s.name === n)),
     awbCol: header.findIndex((c) => /awb/i.test(c)),
     dateCol: header.findIndex((c) => /date/i.test(c)),
   };
   applyColumnChoice();
 
-  return `${rows.length} rows · sheet "${book.SheetNames[0]}"`;
+  const names = state.excel.sheets;
+  return `${rows.length} rows · ` + (many
+    ? `${names.length} sheets (${names.join(', ')})`
+    : `sheet "${names[0]}"`);
+}
+
+/* Returns null when the sheet holds no AWB column, unless forced. */
+function readSheet(sheet, name, force = false) {
+  if (!sheet) return null;
+  // Raw values drive the logic, so a long AWB never arrives in scientific
+  // notation; formatted values drive what is displayed.
+  const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
+  const fmt = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+
+  const found = raw.findIndex((row) => row.some((c) => /awb/i.test(String(c))));
+  if (found < 0 && !force) return null;
+  const at = found >= 0 ? found : 0;
+
+  const header = (raw[at] || []).map((c) => String(c).replace(/\s+/g, ' ').trim());
+  if (!header.length) return null;
+
+  const rows = [];
+  for (let i = at + 1; i < raw.length; i += 1) {
+    const rawRow = raw[i] || [];
+    if (!rawRow.some((c) => String(c).trim() !== '')) continue;
+    rows.push({ rowNumber: i + 1, raw: rawRow, fmt: fmt[i] || [] });
+  }
+  return { name, header, rows };
 }
 
 function display(value) {
@@ -334,7 +376,7 @@ function renderExcelTable(cardId, tableId, countId, rows, needle, showBadges) {
   const body = shown.map((row) => {
     const badges = showBadges ? badgeHtml(row) : (row.duplicate ? '<span class="tag dup">dup</span>' : '');
     return `<tr><td class="key">${escape(row.awb || '—')}${badges}</td>`
-      + `<td class="num">${row.rowNumber}</td>`
+      + `<td class="num">${escape(row.rowLabel ?? row.rowNumber)}</td>`
       + header.map((_, i) => (i === state.excel.awbCol ? '' : `<td>${escape(row.cells[i] ?? '')}</td>`)).join('')
       + '</tr>';
   }).join('');
@@ -414,7 +456,8 @@ function downloadCsv(which) {
   } else {
     const set = { excel: r.excelOnly, matched: r.matched }[which];
     header = ['excel_row', ...state.excel.header, 'possible_typo_of'];
-    rows = set.map((row) => [row.rowNumber, ...row.cells, (row.lookalikes || []).join(' ')]);
+    rows = set.map((row) => [row.rowLabel ?? row.rowNumber, ...row.cells,
+      (row.lookalikes || []).join(' ')]);
     name = `${stamp}__${{ excel: 'in-excel-not-in-pdf', matched: 'matched' }[which]}.csv`;
   }
 
