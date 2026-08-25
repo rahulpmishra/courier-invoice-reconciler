@@ -1,0 +1,20 @@
+# Real invoices and booking registers. These carry customer names, phone
+# numbers and bank details — keep them out of the repository. Use the synthetic
+# files in tests/fixtures/ instead (tools/make_fixtures.py regenerates them).
+/*.pdf
+/*.csv
+/*.xlsx
+/*.xls
+
+# Output of extract_awb.py, which writes next to its input
+/tests/fixtures/sample-invoice.csv
+/tests/fixtures/sample-invoice.xlsx
+
+# Deployment bundle, rebuilt on demand
+/dist/
+
+node_modules/
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db

@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Vendored minified builds: keep them byte-identical to upstream so they can be
+# checked against the published files.
+web/vendor/** -text
+
+*.pdf   binary
+*.xlsx  binary
+*.png   binary
