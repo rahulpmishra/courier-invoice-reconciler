@@ -1,0 +1,190 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>browser-check</title>
+<!--
+  Integration check for the real page. Loads web/index.html in a same-origin
+  iframe, feeds it the two sample files exactly as a user's file picker would,
+  clicks Compare and asserts on what the page actually rendered.
+
+  Serve the PROJECT ROOT, then:
+    chrome --headless=new --dump-dom --virtual-time-budget=30000 \
+      http://localhost:8000/tools/browser-check.html
+-->
+<pre id="out">running…</pre>
+<img src="/__hold__" alt="" width="1" height="1">
+<iframe id="frame" src="/web/index.html" style="width:390px;height:2400px;border:0"></iframe>
+<script type="module">
+const out = document.getElementById('out');
+const lines = [];
+let failures = 0;
+
+function check(label, actual, expected) {
+  const ok = String(actual) === String(expected);
+  if (!ok) failures += 1;
+  lines.push(`${ok ? 'PASS' : 'FAIL'}  ${label}: ${actual}${ok ? '' : ` (expected ${expected})`}`);
+  out.textContent = lines.join('\n');
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function until(fn, ms = 25000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const value = fn();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error('timed out waiting for the page');
+    await sleep(50);
+  }
+}
+
+/* Everything here must be built inside the frame's realm. Chrome accepts a
+   cross-realm File into DataTransfer but silently drops it, leaving
+   input.files empty and the page's change handler with nothing to do. */
+async function fileFrom(win, path, type) {
+  const res = await win.fetch(path);
+  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+  const name = decodeURIComponent(path.split('/').pop());
+  return new win.File([await res.blob()], name, { type });
+}
+
+function feed(win, input, file) {
+  const dt = new win.DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  if (input.files.length !== 1) throw new Error(`could not attach ${file.name} to ${input.id}`);
+  input.dispatchEvent(new win.Event('change', { bubbles: true }));
+}
+
+try {
+  const frame = document.getElementById('frame');
+  // Wait for app.js to have run, not merely for the HTML to have parsed: the
+  // module is deferred, so the inputs exist well before any listener does.
+  await until(() => frame.contentDocument?.documentElement?.dataset?.appReady);
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  const $ = (id) => doc.getElementById(id);
+
+  win.addEventListener('error', (e) => { lines.push(`PAGE ERROR: ${e.message}`); failures += 1; });
+
+  const [pdf, xls] = await Promise.all([
+    fileFrom(win, '/tests/fixtures/sample-invoice.pdf', 'application/pdf'),
+    fileFrom(win, '/tests/fixtures/sample-register.csv', 'text/csv'),
+  ]);
+
+  feed(win, $('pdfInput'), pdf);
+  await until(() => $('pdfDrop').classList.contains('loaded'));
+  check('pdf hint', $('pdfHint').textContent,
+    '120 rows · 7 pages · EXM/1000/A0001, EXM/1000/A0002');
+
+  feed(win, $('xlsInput'), xls);
+  await until(() => $('xlsDrop').classList.contains('loaded'));
+  check('excel hint', $('xlsHint').textContent, '71 rows · sheet "Sheet1"');
+
+  check('period label', $('periodLabel').textContent,
+    'Invoice period 01/06/2026 – 30/06/2026Excel rows outside these dates are ignored.');
+  check('no date-filter toggle', $('dateFilter'), 'null');
+  check('column picker hidden', $('columnPicker').hidden, 'true');
+  check('compare enabled', $('runBtn').disabled, 'false');
+
+  $('runBtn').click();
+  await until(() => !$('summaryCard').hidden);
+
+  const chips = () => [...$('chips').querySelectorAll('.chip')].map((c) => c.textContent).join(' | ');
+  // The 25 next-month rows must not appear anywhere - not as a table, not as a count.
+  check('chips', chips(),
+    '41 matched | 5 only in Excel | 80 only in PDF | 1 with an unreadable date');
+  check('summary note', $('summaryNote').textContent,
+    'Only Excel rows dated 01/06/2026 – 30/06/2026 were compared.'
+    + ' Rows whose date could not be read are compared rather than dropped.');
+
+  const bodyRows = (id) => $(id).querySelectorAll('tbody tr').length;
+  check('excel table rows', bodyRows('excelTable'), 5);
+  check('pdf table rows', bodyRows('pdfTable'), 80);
+  check('matched table rows', bodyRows('matchedTable'), 41);
+  check('no skipped card', $('skippedCard'), 'null');
+  check('no skipped table', $('skippedTable'), 'null');
+  check('word "skipped" appears nowhere', /skipped/i.test(doc.body.textContent), 'false');
+  check('no out-of-period count rendered',
+    /25/.test($('chips').textContent + $('summaryNote').textContent), 'false');
+  check('no next-month row leaked into a table',
+    [...doc.querySelectorAll('tbody td')].some((td) => /-July/i.test(td.textContent)), 'false');
+
+  // coverage card: the gap column must reconcile with the "only in PDF" chip
+  check('coverage banner', $('coverageBanner').hidden, 'false');
+  check('  -> text', $('coverageBanner').textContent,
+    'Your register covers 38% of this invoice — 46 bookings recorded against 120 billed.'
+    + ' Most of the 80 “only in PDF” rows below are shipments missing from your'
+    + ' register, not proof of over-billing.');
+  const dayRows = $('coverageTable').querySelectorAll('tbody tr:not(.total)').length;
+  check('coverage day count matches the table', $('coverageDays').textContent, dayRows);
+  const totalRow = $('coverageTable').querySelector('tbody tr.total');
+  check('coverage totals row', [...totalRow.children].map((c) => c.textContent).join('|'),
+    'Total|120|46|40|80');
+  const covRow = (d) => [...$('coverageTable').querySelectorAll('tbody tr')]
+    .find((tr) => tr.firstElementChild.textContent === d);
+  check('back-billed date has billings but no bookings',
+    [...covRow('12/05/2026').children].map((c) => c.textContent).join('|'), '12/05/2026|1|||1');
+  check('date-shift note', $('coverageNote').textContent.includes('1 AWB was billed'), 'true');
+  check('coverage table fits without sideways scroll',
+    $('coverageTable').parentElement.scrollWidth <= $('coverageTable').parentElement.clientWidth, 'true');
+
+  const typoTags = [...doc.querySelectorAll('#excelTable .tag, #pdfTable .tag')]
+    .map((t) => t.textContent.trim());
+  check('typo badges', typoTags.join(' | '), '≈ 900461102793 | ≈ 9004461102793');
+
+  const firstPdfRow = $('pdfTable').querySelector('tbody tr');
+  check('first pdf-only row', [...firstPdfRow.children].slice(0, 6).map((c) => c.textContent).join('|'),
+    '900461102681|EXM/1000/A0001|Additional Charges|2|1|12/05/2026');
+
+  // search box narrows a table
+  const search = $('pdfSearch');
+  search.value = 'CHENNAI';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  await sleep(400);
+  check('pdf table after search', bodyRows('pdfTable') < 80 && bodyRows('pdfTable') > 0, 'true');
+  search.value = '';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  await sleep(400);
+
+  // layout: nothing may push the page sideways at phone width
+  check('no horizontal body scroll',
+    doc.documentElement.scrollWidth <= doc.documentElement.clientWidth, 'true');
+  const scroller = $('pdfTable').parentElement;
+  check('pdf table scrolls inside its card', scroller.scrollHeight > scroller.clientHeight, 'true');
+  check('sticky awb column', win.getComputedStyle($('pdfTable').querySelector('td.key')).position, 'sticky');
+
+  // A --screenshot run wants the app on its own, wide, with the panel open.
+  $('coverageCard').querySelector('details').open = true;
+  if (location.search.includes('shot')) {
+    out.hidden = true;
+    frame.style.width = '900px';
+  }
+  await sleep(400);
+
+} catch (err) {
+  failures += 1;
+  lines.push(`ERROR: ${err.message}`);
+  const f = document.getElementById('frame');
+  try {
+    lines.push(`  iframe src=${f?.getAttribute('src')} url=${f?.contentWindow?.location?.href}`
+      + ` readyState=${f?.contentDocument?.readyState}`
+      + ` bodyLen=${f?.contentDocument?.body?.innerHTML?.length}`);
+    const d = f?.contentDocument;
+    lines.push(`  app ready:  ${d?.documentElement?.dataset?.appReady}`);
+    lines.push(`  app status: ${d?.getElementById('status')?.textContent}`);
+    lines.push(`  pdf hint:   ${d?.getElementById('pdfHint')?.textContent}`);
+    lines.push(`  xls hint:   ${d?.getElementById('xlsHint')?.textContent}`);
+    lines.push(`  chips:      ${d?.getElementById('chips')?.textContent}`);
+  } catch (e) {
+    lines.push(`  iframe inaccessible: ${e.message}`);
+  }
+}
+
+lines.push(failures === 0 ? 'ALL BROWSER CHECKS PASSED' : `${failures} BROWSER CHECK(S) FAILED`);
+out.textContent = lines.join('\n');
+document.title = failures === 0 ? 'ok' : 'fail';
+
+// Hand the report back to tools/run-browser-check.py, which is waiting for it.
+const payload = btoa(String.fromCharCode(...new TextEncoder().encode(lines.join('\n'))));
+fetch(`/__result__?failures=${failures}&b64=${encodeURIComponent(payload)}`).catch(() => {});
+</script>
